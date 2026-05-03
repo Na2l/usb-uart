@@ -27,9 +27,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         showCollapseAll: false
     });
 
-    const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
-    statusBar.command = 'usb-local.refresh';
-
     // Per-port terminal state
     const terminals = new Map<string, vscode.Terminal>();
     const ptys      = new Map<string, UartTerminal>();
@@ -54,9 +51,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     async function refreshAll(): Promise<void> {
         await provider.refresh();
-        statusBar.text = '$(plug) Serial Terminal';
-        statusBar.tooltip = 'Serial Terminal — click to refresh';
-        statusBar.show();
     }
 
     function openPortTerminal(item: PortItem): void {
@@ -129,6 +123,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             const current = getSettings(item.portPath);
             PortSettingsPanel.show(item.portPath, item.portPath, current, async (newSettings) => {
                 await saveSettings(item.portPath, newSettings);
+                provider.fire();
                 // Update line ending in the live terminal immediately
                 const pty = ptys.get(item.portPath);
                 if (pty) {
@@ -217,7 +212,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }),
 
         treeView,
-        statusBar,
         uart
     );
 

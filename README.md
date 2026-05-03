@@ -52,10 +52,9 @@ Upload any file to a connected MicroPython device using the raw REPL protocol:
 - Supports cancellation mid-upload
 - Files are written in binary chunks to avoid overflowing the device's input buffer
 
-### Status Bar Integration
-A status bar item provides a quick **Refresh** shortcut to rescan available ports without opening the Serial panel.
-
 ## Usage
+
+![Serial Terminal demo](https://raw.githubusercontent.com/Na2l/usb-uart/main/resources/serial.gif)
 
 1. Open the **Serial** view in the activity bar (plug icon).
 2. Click **Refresh** to scan for ports.

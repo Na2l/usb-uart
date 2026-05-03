@@ -2,8 +2,8 @@
   "name": "usb-local",
   "displayName": "Serial Terminal",
   "description": "UART/Serial port terminal for VS Code desktop.",
-  "version": "1.0.3",
-  "publisher": "NaAl",
+  "version": "1.0.4",
+  "publisher": "Na2l",
   "repository": {
     "type": "git",
     "url": "https://github.com/Na2l/usb-uart.git"
@@ -79,6 +79,7 @@
     }
   },
   "scripts": {
+    "clean": "rm -rf dist releases/*",
     "compile": "webpack",
     "package": "webpack && npx vsce package --out releases/"
   },
