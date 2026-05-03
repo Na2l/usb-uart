@@ -1,0 +1,100 @@
+{
+  "name": "usb-local",
+  "displayName": "Serial Terminal",
+  "description": "UART/Serial port terminal for VS Code desktop.",
+  "version": "1.0.0",
+  "publisher": "NaAl",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Na2l/usb-uart.git"
+  },
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onView:usbLocalPorts", "onCommand:usb-local.uploadFileMpy"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "usbLocal",
+          "title": "Serial",
+          "icon": "resources/icons/serial-activity.svg"
+        }
+      ]
+    },
+    "commands": [
+      { "command": "usb-local.refresh",          "title": "Refresh",                         "icon": "$(refresh)" },
+      { "command": "usb-local.connectPort",       "title": "Connect",                         "icon": "$(debug-start)" },
+      { "command": "usb-local.disconnectPort",    "title": "Disconnect",                      "icon": "$(debug-stop)" },
+      { "command": "usb-local.openPortTerminal",  "title": "Open Terminal",                   "icon": "$(terminal)" },
+      { "command": "usb-local.configurePort",     "title": "Configure Port",                  "icon": "$(settings-gear)" },
+      { "command": "usb-local.uploadFileMpy",     "title": "Upload to MicroPython Device",    "icon": "$(cloud-upload)" }
+    ],
+    "views": {
+      "usbLocal": [
+        { "id": "usbLocalPorts", "name": "Ports" }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "usb-local.refresh", "when": "view == usbLocalPorts", "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "usb-local.connectPort",      "when": "view == usbLocalPorts && viewItem == port",          "group": "inline" },
+        { "command": "usb-local.disconnectPort",   "when": "view == usbLocalPorts && viewItem == portConnected", "group": "inline" },
+        { "command": "usb-local.openPortTerminal", "when": "view == usbLocalPorts && viewItem == portConnected", "group": "inline" },
+        { "command": "usb-local.configurePort",    "when": "view == usbLocalPorts && viewItem =~ /^port/",       "group": "inline" },
+        { "command": "usb-local.disconnectPort",   "when": "view == usbLocalPorts && viewItem == portConnected" },
+        { "command": "usb-local.configurePort",    "when": "view == usbLocalPorts && viewItem =~ /^port/" },
+        { "command": "usb-local.uploadFileMpy",    "when": "view == usbLocalPorts && viewItem == portConnected" }
+      ],
+      "explorer/context": [
+        { "command": "usb-local.uploadFileMpy", "when": "!explorerResourceIsFolder", "group": "7_modification@10" }
+      ],
+      "editor/context": [
+        { "command": "usb-local.uploadFileMpy", "when": "resourceScheme == file", "group": "7_modification@10" }
+      ],
+      "editor/title": [
+        { "command": "usb-local.uploadFileMpy", "when": "resourceScheme == file", "group": "navigation" }
+      ]
+    },
+    "configuration": {
+      "title": "Serial Terminal",
+      "properties": {
+        "usb-local.micropythonShortcuts": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "default": {
+            "ls":    "import os; os.listdir()",
+            "ll":    "import os; print('\\n'.join(os.listdir()))",
+            "pwd":   "import os; print(os.getcwd())",
+            "df":    "import os; print(os.statvfs('/'))",
+            "free":  "import gc; gc.collect(); print(gc.mem_free())",
+            "reset": "import machine; machine.reset()"
+          },
+          "description": "Command shortcuts for MicroPython terminals. Key is the shorthand you type, value is the Python expression sent to the device."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "webpack",
+    "package": "webpack && npx vsce package --out releases/"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.0.0",
+    "webpack": "^5.0.0",
+    "webpack-cli": "^5.0.0",
+    "ts-loader": "^9.0.0",
+    "@vscode/vsce": "^3.0.0"
+  },
+  
+  "dependencies": {
+    "serialport": "^12.0.0"
+  },
+  "overrides": {
+    "undici": "5.28.4",
+    "cheerio": "1.0.0"
+  }
+}
