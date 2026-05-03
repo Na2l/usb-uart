@@ -2,7 +2,7 @@
   "name": "usb-local",
   "displayName": "Serial Terminal",
   "description": "UART/Serial port terminal for VS Code desktop.",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "publisher": "NaAl",
   "repository": {
     "type": "git",
@@ -66,8 +66,8 @@
           "type": "object",
           "additionalProperties": { "type": "string" },
           "default": {
-            "ls":    "import os; os.listdir()",
-            "ll":    "import os; print('\\n'.join(os.listdir()))",
+            "ls":    "import os; os.listdir($1)",
+            "ll":    "import os; print('\\n'.join(os.listdir($1)))",
             "pwd":   "import os; print(os.getcwd())",
             "df":    "import os; print(os.statvfs('/'))",
             "free":  "import gc; gc.collect(); print(gc.mem_free())",

@@ -100,24 +100,35 @@ export class UartTerminal implements vscode.Pseudoterminal {
     handleInput(data: string): void {
         if (!this.uart.isConnected(this.portPath)) { return; }
         if (this.terminalMode === 'micropython') {
-            // In MicroPython mode intercept Enter to expand shortcuts,
-            // otherwise pass every character straight through.
+            // In MicroPython mode: buffer locally with local echo, expand shortcuts on Enter.
+            // Characters are NOT forwarded to the device until Enter is pressed, so the
+            // expanded text is the only thing the device ever receives.
             for (const ch of data) {
                 if (ch === '\r') {
                     const shortcuts: Record<string, string> =
                         vscode.workspace.getConfiguration('usb-local').get('micropythonShortcuts') ?? {};
-                    const expanded = shortcuts[this.mpyInputLine.trim()] ?? this.mpyInputLine;
+                    const parts = this.mpyInputLine.trim().split(/\s+/);
+                    const key = parts[0];
+                    const arg1 = parts.slice(1).join(' ');
+                    let expanded: string;
+                    const tpl = shortcuts[this.mpyInputLine.trim()] ?? shortcuts[key];
+                    if (tpl !== undefined) {
+                        expanded = tpl.replace('$1', arg1 ? `'${arg1}'` : '');
+                    } else {
+                        expanded = this.mpyInputLine;
+                    }
                     this.mpyInputLine = '';
+                    this.write('\r\n');
                     this.uart.write(this.portPath, expanded + '\r')
                         .catch(e => log.appendLine(`[Serial] Terminal write error: ${e}`));
                 } else if (ch === '\x7f' || ch === '\x08') {
-                    this.mpyInputLine = this.mpyInputLine.slice(0, -1);
-                    this.uart.write(this.portPath, ch)
-                        .catch(e => log.appendLine(`[Serial] Terminal write error: ${e}`));
+                    if (this.mpyInputLine.length > 0) {
+                        this.mpyInputLine = this.mpyInputLine.slice(0, -1);
+                        this.write('\x08 \x08');
+                    }
                 } else {
                     this.mpyInputLine += ch;
-                    this.uart.write(this.portPath, ch)
-                        .catch(e => log.appendLine(`[Serial] Terminal write error: ${e}`));
+                    this.write(ch);
                 }
             }
             return;
