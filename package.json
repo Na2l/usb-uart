@@ -8,6 +8,7 @@
     "type": "git",
     "url": "https://github.com/Na2l/usb-uart.git"
   },
+  "icon": "resources/icons/icon.png",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
   "activationEvents": ["onView:usbLocalPorts", "onCommand:usb-local.uploadFileMpy"],
