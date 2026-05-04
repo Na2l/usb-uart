@@ -2,7 +2,7 @@
   "name": "usb-local",
   "displayName": "Serial Terminal",
   "description": "UART/Serial port terminal for VS Code desktop.",
-  "version": "1.0.4",
+  "version": "1.0.10",
   "publisher": "Na2l",
   "repository": {
     "type": "git",
@@ -11,7 +11,7 @@
   "icon": "resources/icons/icon.png",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
-  "activationEvents": ["onView:usbLocalPorts", "onCommand:usb-local.uploadFileMpy"],
+  "activationEvents": ["onView:usbLocalPorts", "onCommand:usb-local.uploadFileMpy", "onCommand:usb-local.uploadFolderMpy"],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -29,7 +29,8 @@
       { "command": "usb-local.disconnectPort",    "title": "Disconnect",                      "icon": "$(debug-stop)" },
       { "command": "usb-local.openPortTerminal",  "title": "Open Terminal",                   "icon": "$(terminal)" },
       { "command": "usb-local.configurePort",     "title": "Configure Port",                  "icon": "$(settings-gear)" },
-      { "command": "usb-local.uploadFileMpy",     "title": "Upload to MicroPython Device",    "icon": "$(cloud-upload)" }
+      { "command": "usb-local.uploadFileMpy",     "title": "Upload to MicroPython Device",        "icon": "$(cloud-upload)" },
+      { "command": "usb-local.uploadFolderMpy",   "title": "Upload Folder to MicroPython Device", "icon": "$(cloud-upload)" }
     ],
     "views": {
       "usbLocal": [
@@ -50,7 +51,8 @@
         { "command": "usb-local.uploadFileMpy",    "when": "view == usbLocalPorts && viewItem == portConnected" }
       ],
       "explorer/context": [
-        { "command": "usb-local.uploadFileMpy", "when": "!explorerResourceIsFolder", "group": "7_modification@10" }
+        { "command": "usb-local.uploadFileMpy",   "when": "!explorerResourceIsFolder", "group": "7_modification@10" },
+        { "command": "usb-local.uploadFolderMpy", "when": "explorerResourceIsFolder",  "group": "7_modification@10" }
       ],
       "editor/context": [
         { "command": "usb-local.uploadFileMpy", "when": "resourceScheme == file", "group": "7_modification@10" }
@@ -62,6 +64,11 @@
     "configuration": {
       "title": "Serial Terminal",
       "properties": {
+        "usb-local.showAllPorts": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show all serial ports (including ttyS* and other non-USB ports). When disabled, only ports with USB device metadata are shown."
+        },
         "usb-local.micropythonShortcuts": {
           "type": "object",
           "additionalProperties": { "type": "string" },
@@ -71,7 +78,10 @@
             "pwd":   "import os; print(os.getcwd())",
             "df":    "import os; print(os.statvfs('/'))",
             "free":  "import gc; gc.collect(); print(gc.mem_free())",
-            "reset": "import machine; machine.reset()"
+            "reset":    "import machine; machine.reset()",
+            "ifconfig": "import network; sta=network.WLAN(network.STA_IF); ap=network.WLAN(network.AP_IF); print('STA: ' + (str(sta.ifconfig()) if sta.active() else 'inactive')); print('AP:  ' + (str(ap.ifconfig()) if ap.active() else 'inactive'))",
+            "head":     "exec(\"p=$1.split();n,fn=(int(p[0][1:]),p[1]) if len(p)>1 and p[0][0]=='-' else (10,p[0]);f=open(fn);[print(l,end='') for _,l in zip(range(n),f)];f.close()\")",
+            "tail":     "exec(\"p=$1.split();n,fn=(int(p[0][1:]),p[1]) if len(p)>1 and p[0][0]=='-' else (10,p[0]);f=open(fn);lines=f.readlines();f.close();[print(l,end='') for l in lines[-n:]]\")"
           },
           "description": "Command shortcuts for MicroPython terminals. Key is the shorthand you type, value is the Python expression sent to the device."
         }

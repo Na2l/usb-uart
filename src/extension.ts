@@ -20,7 +20,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     provider.isConnected = (p) => uart.isConnected(p);
     provider.getBaudRate = (p) => uart.getBaudRate(p);
-    provider.getAlias    = (p) => getSettings(p).alias ?? '';
+    provider.getAlias    = (key) => getSettings(key).alias ?? '';
 
     const treeView = vscode.window.createTreeView('usbLocalPorts', {
         treeDataProvider: provider,
@@ -32,21 +32,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const ptys      = new Map<string, UartTerminal>();
     const portSettings = new Map<string, PortSettings>(); // in-memory cache
 
-    function portKey(path: string): string {
-        return `portSettings:${path}`;
+    function portKey(key: string): string {
+        return `portSettings:${key}`;
     }
 
-    function getSettings(path: string): PortSettings {
-        if (portSettings.has(path)) { return portSettings.get(path)!; }
-        const saved = context.globalState.get<PortSettings>(portKey(path));
+    function getSettings(key: string): PortSettings {
+        if (portSettings.has(key)) { return portSettings.get(key)!; }
+        const saved = context.globalState.get<PortSettings>(portKey(key));
         const s = saved ?? DEFAULT_SETTINGS;
-        portSettings.set(path, s);
+        portSettings.set(key, s);
         return s;
     }
 
-    async function saveSettings(path: string, settings: PortSettings): Promise<void> {
-        portSettings.set(path, settings);
-        await context.globalState.update(portKey(path), settings);
+    async function saveSettings(key: string, settings: PortSettings): Promise<void> {
+        portSettings.set(key, settings);
+        await context.globalState.update(portKey(key), settings);
     }
 
     async function refreshAll(): Promise<void> {
@@ -60,7 +60,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             return;
         }
 
-        const settings = getSettings(item.portPath);
+        const settings = getSettings(item.settingsKey);
         const alias = settings.alias?.trim() || '';
         const terminalName = alias || item.portPath;
         const label = alias
@@ -76,10 +76,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         terminal.show();
 
         context.subscriptions.push(
-            vscode.window.onDidCloseTerminal(t => {
+            vscode.window.onDidCloseTerminal(async t => {
                 if (t === terminal) {
                     terminals.delete(item.portPath);
                     ptys.delete(item.portPath);
+                    await uart.disconnect(item.portPath);
                 }
             })
         );
@@ -93,7 +94,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         vscode.commands.registerCommand('usb-local.connectPort', async (item?: PortItem) => {
             if (!item) { return; }
-            const settings = getSettings(item.portPath);
+            const settings = getSettings(item.settingsKey);
             try {
                 await uart.connect(item.portPath, settings);
             } catch (e) {
@@ -120,9 +121,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         vscode.commands.registerCommand('usb-local.configurePort', (item?: PortItem) => {
             if (!item) { return; }
-            const current = getSettings(item.portPath);
+            const current = getSettings(item.settingsKey);
             PortSettingsPanel.show(item.portPath, item.portPath, current, async (newSettings) => {
-                await saveSettings(item.portPath, newSettings);
+                await saveSettings(item.settingsKey, newSettings);
                 provider.fire();
                 // Update line ending in the live terminal immediately
                 const pty = ptys.get(item.portPath);
@@ -170,7 +171,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
                 const picked = await vscode.window.showQuickPick(
                     connected.map(p => {
-                        const a = getSettings(p).alias?.trim();
+                        const a = getSettings(provider.getSettingsKey(p)).alias?.trim();
                         return { label: a || p, description: a ? p : undefined, portPath: p };
                     }),
                     { placeHolder: 'Select the serial port to upload to' }
@@ -190,7 +191,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             const pty = ptys.get(portPath);
             pty?.pause();
 
-            const portLabel = getSettings(portPath).alias?.trim() || portPath;
+            const portLabel = getSettings(provider.getSettingsKey(portPath)).alias?.trim() || portPath;
             const uploader = new MicroPythonUploader(uart);
             await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: `Uploading to ${portLabel}`, cancellable: true },
@@ -204,6 +205,65 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                         const msg = e instanceof Error ? e.message : String(e);
                         vscode.window.showErrorMessage(`Upload failed: ${msg}`);
                         log.appendLine(`[MicroPython] Upload error: ${msg}`);
+                    } finally {
+                        pty?.resume();
+                    }
+                }
+            );
+        }),
+
+        vscode.commands.registerCommand('usb-local.uploadFolderMpy', async (arg?: vscode.Uri) => {
+            const uri = arg;
+            if (!uri || uri.scheme !== 'file') {
+                vscode.window.showErrorMessage('Serial Terminal: Select a folder to upload.');
+                return;
+            }
+
+            const connected = uart.connectedPorts();
+            if (connected.length === 0) {
+                vscode.window.showErrorMessage(
+                    'Serial Terminal: No connected port. Connect to a MicroPython device first.'
+                );
+                return;
+            }
+
+            const pickedPort = connected.length === 1
+                ? { portPath: connected[0] }
+                : await vscode.window.showQuickPick(
+                    connected.map(p => {
+                        const a = getSettings(provider.getSettingsKey(p)).alias?.trim();
+                        return { label: a || p, description: a ? p : undefined, portPath: p };
+                    }),
+                    { placeHolder: 'Select the serial port to upload to' }
+                );
+            if (!pickedPort) { return; }
+            const portPath = pickedPort.portPath;
+
+            const folderName = path.basename(uri.fsPath);
+            const remoteBase = await vscode.window.showInputBox({
+                prompt: 'Remote base path on device',
+                value: '/' + folderName,
+                placeHolder: 'e.g. /myapp',
+            });
+            if (!remoteBase) { return; }
+
+            const pty = ptys.get(portPath);
+            pty?.pause();
+
+            const portLabel = getSettings(provider.getSettingsKey(portPath)).alias?.trim() || portPath;
+            const uploader = new MicroPythonUploader(uart);
+            await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: `Uploading folder to ${portLabel}`, cancellable: true },
+                async (progress, token) => {
+                    try {
+                        await uploader.uploadFolder(portPath, uri.fsPath, remoteBase, progress, token);
+                        vscode.window.showInformationMessage(
+                            `Uploaded ${folderName} → ${remoteBase} on ${portLabel}`
+                        );
+                    } catch (e: unknown) {
+                        const msg = e instanceof Error ? e.message : String(e);
+                        vscode.window.showErrorMessage(`Folder upload failed: ${msg}`);
+                        log.appendLine(`[MicroPython] Folder upload error: ${msg}`);
                     } finally {
                         pty?.resume();
                     }

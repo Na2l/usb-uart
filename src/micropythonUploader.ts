@@ -27,31 +27,153 @@ export class MicroPythonUploader {
         await this.enterRawRepl(portPath);
         try {
             progress.report({ message: 'Opening file on device…' });
-            await this.execRaw(portPath, `f=open(${JSON.stringify(remotePath)},'wb')`);
-
-            let uploaded = 0;
-            while (uploaded < total) {
-                if (token.isCancellationRequested) {
-                    throw new Error('Upload cancelled by user');
-                }
-                const end = Math.min(uploaded + CHUNK_SIZE, total);
-                const chunk = fileData.slice(uploaded, end);
-                const hex = chunk.toString('hex');
-                await this.execRaw(portPath, `f.write(bytes.fromhex('${hex}'))`);
-                uploaded = end;
-                progress.report({
-                    message: `${uploaded}/${total} bytes`,
-                    increment: (chunk.length / total) * 100,
-                });
-            }
-
-            await this.execRaw(portPath, `f.close()`);
+            await this.writeFileInRawRepl(portPath, fileData, remotePath, token, (uploaded) => {
+                progress.report({ message: `${uploaded}/${total} bytes`, increment: (CHUNK_SIZE / total) * 100 });
+            });
             log.appendLine(`[MicroPython] Upload complete: ${remotePath} (${total} bytes)`);
         } finally {
             await this.exitRawRepl(portPath).catch(e => {
                 log.appendLine(`[MicroPython] Warning: failed to exit raw REPL: ${e}`);
             });
         }
+    }
+
+    async uploadFolder(
+        portPath: string,
+        localFolder: string,
+        remoteBase: string,
+        progress: vscode.Progress<{ message?: string; increment?: number }>,
+        token: vscode.CancellationToken
+    ): Promise<void> {
+        // Normalise: ensure leading slash, strip trailing slash
+        const base = ('/' + remoteBase).replace(/\/+/g, '/').replace(/\/$/, '') || '/';
+
+        const files = this.collectFiles(localFolder);
+        const total = files.length;
+        log.appendLine(`[MicroPython] Uploading folder ${localFolder} → ${base} (${total} files)`);
+
+        // Collect all unique remote paths for files, preserving structure
+        const remotePaths = files.map(f => {
+            const rel = path.relative(localFolder, f).replace(/\\/g, '/');
+            return { local: f, remote: base + '/' + rel };
+        });
+
+        // Build ordered dir list (parents before children)
+        const seen = new Set<string>();
+        const dirs: string[] = [];
+        for (const { remote } of remotePaths) {
+            const parts = remote.split('/').filter(Boolean);
+            // Every prefix up to (but not including) the filename is a directory
+            for (let i = 1; i < parts.length; i++) {
+                const d = '/' + parts.slice(0, i).join('/');
+                if (!seen.has(d)) { seen.add(d); dirs.push(d); }
+            }
+        }
+
+        await this.enterRawRepl(portPath);
+        try {
+            // Create directories one level at a time; ignore EEXIST (errno 17)
+            for (const dir of dirs) {
+                if (token.isCancellationRequested) { throw new Error('Upload cancelled by user'); }
+                progress.report({ message: `mkdir ${dir}` });
+                try {
+                    await this.execRaw(portPath, `import os; os.mkdir(${JSON.stringify(dir)})`);
+                } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    if (!msg.includes('[Errno 17]') && !msg.includes('EEXIST')) { throw e; }
+                }
+            }
+
+            for (let i = 0; i < remotePaths.length; i++) {
+                if (token.isCancellationRequested) { throw new Error('Upload cancelled by user'); }
+                const { local: localFile, remote: remotePath } = remotePaths[i];
+                const rel = path.relative(localFolder, localFile).replace(/\\/g, '/');
+                progress.report({ message: `(${i + 1}/${total}) ${rel}`, increment: (1 / total) * 100 });
+                const fileData = await fs.promises.readFile(localFile);
+                await this.writeFileInRawRepl(portPath, fileData, remotePath, token);
+                log.appendLine(`[MicroPython] Uploaded ${remotePath} (${fileData.length} bytes)`);
+            }
+        } finally {
+            await this.exitRawRepl(portPath).catch(e => {
+                log.appendLine(`[MicroPython] Warning: failed to exit raw REPL: ${e}`);
+            });
+        }
+    }
+
+    // ── Private helpers ──────────────────────────────────────────────────────
+
+    /** Reads a text file from the device via raw REPL.
+     *  Uses hex encoding to avoid conflicts with the raw-REPL protocol markers.
+     *  Calls onProgress(bytesRead, total) as data arrives. */
+    async readFile(
+        portPath: string,
+        remotePath: string,
+        onProgress?: (read: number, total: number) => void,
+    ): Promise<string> {
+        log.appendLine(`[MicroPython] Reading ${remotePath} from ${portPath}`);
+        await this.enterRawRepl(portPath);
+        try {
+            // Get file size via os.stat — index 6 is the size field
+            const sizeOut = await this.execRaw(portPath,
+                `import os; print(os.stat(${JSON.stringify(remotePath)})[6])`
+            );
+            const total = parseInt(sizeOut.trim(), 10);
+            if (isNaN(total)) { throw new Error(`Cannot stat ${remotePath}`); }
+
+            let hex = '';
+            let read = 0;
+            await this.execRaw(portPath, `_f=open(${JSON.stringify(remotePath)},'rb')`);
+            while (read < total) {
+                const chunk = await this.execRaw(portPath, `print(_f.read(${CHUNK_SIZE}).hex(),end='')`);
+                hex += chunk.trim();
+                read = Math.min(read + CHUNK_SIZE, total);
+                onProgress?.(read, total);
+            }
+            // Best-effort close even if some chunks failed
+            await this.execRaw(portPath, `_f.close();del _f`).catch(() => {});
+
+            log.appendLine(`[MicroPython] Read ${remotePath} (${total} bytes)`);
+            return Buffer.from(hex, 'hex').toString('utf-8');
+        } finally {
+            await this.exitRawRepl(portPath).catch(e => {
+                log.appendLine(`[MicroPython] Warning: failed to exit raw REPL: ${e}`);
+            });
+        }
+    }
+
+    /** Writes file data to the device while already inside a raw-REPL session. */
+    private async writeFileInRawRepl(
+        portPath: string,
+        fileData: Buffer,
+        remotePath: string,
+        token: vscode.CancellationToken,
+        onChunk?: (uploaded: number, total: number) => void,
+    ): Promise<void> {
+        const total = fileData.length;
+        await this.execRaw(portPath, `f=open(${JSON.stringify(remotePath)},'wb')`);
+        let uploaded = 0;
+        while (uploaded < total) {
+            if (token.isCancellationRequested) { throw new Error('Upload cancelled by user'); }
+            const end = Math.min(uploaded + CHUNK_SIZE, total);
+            const chunk = fileData.slice(uploaded, end);
+            await this.execRaw(portPath, `f.write(bytes.fromhex('${chunk.toString('hex')}'))`);
+            uploaded = end;
+            onChunk?.(uploaded, total);
+        }
+        await this.execRaw(portPath, `f.close()`);
+    }
+
+    private collectFiles(dir: string): string[] {
+        const results: string[] = [];
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                results.push(...this.collectFiles(full));
+            } else if (entry.isFile()) {
+                results.push(full);
+            }
+        }
+        return results;
     }
 
     // ── Raw REPL protocol helpers ────────────────────────────────────────────

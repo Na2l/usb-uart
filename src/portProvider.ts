@@ -10,7 +10,19 @@ interface PortInfo {
     friendlyName?: string;
 }
 
+/** Returns a stable, device-identity key when USB metadata is available,
+ *  falling back to the port path for ports without VID/PID/serial. */
+export function stableKey(info: PortInfo): string {
+    if (info.vendorId && info.productId && info.serialNumber) {
+        return `${info.vendorId}:${info.productId}:${info.serialNumber}`;
+    }
+    return info.path;
+}
+
 export class PortItem extends vscode.TreeItem {
+    /** Stable key used for persisting settings — based on VID:PID:Serial when available. */
+    readonly settingsKey: string;
+
     constructor(
         public readonly portPath: string,
         public readonly info: PortInfo,
@@ -19,6 +31,7 @@ export class PortItem extends vscode.TreeItem {
         alias?: string
     ) {
         super(alias || portPath, vscode.TreeItemCollapsibleState.None);
+        this.settingsKey = stableKey(info);
 
         const extra = info.manufacturer || info.friendlyName || '';
         this.description = alias ? portPath : (isConnected ? `${baudRate} baud` : extra);
@@ -56,7 +69,9 @@ export class PortProvider implements vscode.TreeDataProvider<PortItem> {
     getAlias: (path: string) => string = () => '';
 
     async refresh(): Promise<void> {
-        this.ports = await SerialPort.list();
+        const all = await SerialPort.list();
+        const showAll = vscode.workspace.getConfiguration('usb-local').get<boolean>('showAllPorts', false);
+        this.ports = showAll ? all : all.filter(p => p.vendorId && p.productId);
         this._onDidChangeTreeData.fire();
     }
 
@@ -70,7 +85,13 @@ export class PortProvider implements vscode.TreeDataProvider<PortItem> {
 
     getChildren(): PortItem[] {
         return this.ports.map(p =>
-            new PortItem(p.path, p, this.isConnected(p.path), this.getBaudRate(p.path), this.getAlias(p.path))
+            new PortItem(p.path, p, this.isConnected(p.path), this.getBaudRate(p.path), this.getAlias(stableKey(p)))
         );
+    }
+
+    /** Returns the stable settings key for a given port path. */
+    getSettingsKey(portPath: string): string {
+        const info = this.ports.find(p => p.path === portPath);
+        return info ? stableKey(info) : portPath;
     }
 }

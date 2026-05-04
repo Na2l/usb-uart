@@ -42,8 +42,22 @@ Assign a friendly name to any port. The alias appears as the terminal tab title 
 ### MicroPython Mode
 Switch a port to **MicroPython** mode to get an enhanced REPL experience:
 - Built-in command shortcuts that expand to Python expressions before sending
-- Default shortcuts include `ls`, `ll`, `pwd`, `df`, `free`, and `reset`
-- Customize shortcuts via the `usb-local.micropythonShortcuts` setting in VS Code settings
+- Type `alias` to list all defined aliases
+- Customize aliases via the `usb-local.micropythonShortcuts` setting in VS Code settings
+
+Default aliases:
+
+| Command | Expands to |
+|---|---|
+| `ls` | `import os; os.listdir($1)` |
+| `ll` | `import os; print('\n'.join(os.listdir($1)))` |
+| `pwd` | `import os; print(os.getcwd())` |
+| `df` | `import os; print(os.statvfs('/'))` |
+| `free` | `import gc; gc.collect(); print(gc.mem_free())` |
+| `reset` | `import machine; machine.reset()` |
+| `ifconfig` | Show IP config for both STA and AP interfaces |
+
+`$1` is replaced by the argument you type after the alias (e.g. `ls /lib`).
 
 ### File Upload to MicroPython Devices
 Upload any file to a connected MicroPython device using the raw REPL protocol:
