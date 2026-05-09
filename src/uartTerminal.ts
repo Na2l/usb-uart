@@ -18,6 +18,8 @@ export class UartTerminal implements vscode.Pseudoterminal {
 
     /** Locally buffered input line — sent to UART only on Enter. */
     private inputLine = '';
+    /** Tracks the length of the last drawn MicroPython input line for clearing. */
+    private lastDrawnLength = 0;
     /** Tracks what the user is typing in MicroPython pass-through mode for shortcut expansion. */
     private mpyInputLine = '';
     /** When set, the next Enter confirms (y/yes) or cancels the pending command. */
@@ -28,6 +30,8 @@ export class UartTerminal implements vscode.Pseudoterminal {
     private historyIndex = -1;
     /** Saved draft line while browsing history. */
     private historyDraft = '';
+    /** Cursor position within mpyInputLine (0 = start, mpyInputLine.length = end) */
+    private mpyCursor = 0;
 
     /** Terminal dimensions — updated by setDimensions. */
     private rows = 24;
@@ -151,6 +155,18 @@ export class UartTerminal implements vscode.Pseudoterminal {
                         this.historyIndex = -1;
                         this.setMpyLine(this.historyDraft);
                     }
+                } else if (data === '\x1b[D') { // Left arrow
+                    if (this.mpyCursor > 0) {
+                        this.mpyCursor--;
+                        // Move cursor left: \x1b[D
+                        this.write('\x1b[D');
+                    }
+                } else if (data === '\x1b[C') { // Right arrow
+                    if (this.mpyCursor < this.mpyInputLine.length) {
+                        this.mpyCursor++;
+                        // Move cursor right: \x1b[C
+                        this.write('\x1b[C');
+                    }
                 }
                 // All other escape sequences (e.g. Ctrl+arrow, F-keys) are ignored.
                 return;
@@ -160,6 +176,7 @@ export class UartTerminal implements vscode.Pseudoterminal {
                 // the line buffer and are sent to the device immediately.
                 if (ch < '\x20' && ch !== '\r' && ch !== '\x7f' && ch !== '\x08') {
                     this.mpyInputLine = '';
+                    this.mpyCursor = 0;
                     if (this.pendingConfirm !== undefined) {
                         this.pendingConfirm = undefined;
                         this.write('\r\n\x1b[1;33mFormat cancelled.\x1b[0m\r\n');
@@ -178,6 +195,7 @@ export class UartTerminal implements vscode.Pseudoterminal {
                     const key = parts[0];
                     const arg1 = parts.slice(1).join(' ');
                     this.mpyInputLine = '';
+                    this.mpyCursor = 0;
                     this.historyIndex = -1;
                     this.historyDraft = '';
                     this.write('\r\n');
@@ -210,7 +228,7 @@ export class UartTerminal implements vscode.Pseudoterminal {
                         this.uart.write(this.portPath, '\r').catch(() => {});
                     } else if (trimmed === 'format') {
                         const formatCmd = shortcuts['format'] ??
-                            "import os; os.mkfs('/'); print('Filesystem formatted.')";
+                            "import os; os.mkfs('/')\; print('Filesystem formatted.')";
                         this.pendingConfirm = formatCmd;
                         this.write('\x1b[1;31mWarning: this will delete everything on the device filesystem.\x1b[0m\r\n');
                         this.write('Are you sure? [y/N]: ');
@@ -238,13 +256,19 @@ export class UartTerminal implements vscode.Pseudoterminal {
                             .catch(e => log.appendLine(`[Serial] Terminal write error: ${e}`));
                     }
                 } else if (ch === '\x7f' || ch === '\x08') {
-                    if (this.mpyInputLine.length > 0) {
-                        this.mpyInputLine = this.mpyInputLine.slice(0, -1);
-                        this.write('\x08 \x08');
+                    if (this.mpyInputLine.length > 0 && this.mpyCursor > 0) {
+                        // Remove character before cursor
+                        this.mpyInputLine = this.mpyInputLine.slice(0, this.mpyCursor - 1) + this.mpyInputLine.slice(this.mpyCursor);
+                        this.mpyCursor--;
+                        // Redraw line
+                        this.redrawMpyLine();
                     }
-                } else {
-                    this.mpyInputLine += ch;
-                    this.write(ch);
+                } else if (ch >= ' ') {
+                    // Insert character at cursor
+                    this.mpyInputLine = this.mpyInputLine.slice(0, this.mpyCursor) + ch + this.mpyInputLine.slice(this.mpyCursor);
+                    this.mpyCursor++;
+                    // Redraw line
+                    this.redrawMpyLine();
                 }
             }
             return;
@@ -333,12 +357,44 @@ export class UartTerminal implements vscode.Pseudoterminal {
         this._onDidWrite.fire(text);
     }
 
-    /** Replace the current MicroPython input line with `line`, updating display. */
+    /** Replace the current MicroPython input line with `line`, updating display and cursor. */
     private setMpyLine(line: string): void {
-        // Backspace over only the typed characters, leaving the device prompt intact
-        this.write('\x08 \x08'.repeat(this.mpyInputLine.length));
+        // Redraw prompt and line, reset cursor to end
+        this.write(`\r`); // Move to start of line
+        this.write(this.getPrompt());
         this.write(line);
+        // Clear any extra characters from previous input
+        if (this.lastDrawnLength > line.length) {
+            this.write(' '.repeat(this.lastDrawnLength - line.length));
+        }
         this.mpyInputLine = line;
+        this.mpyCursor = line.length;
+        this.lastDrawnLength = line.length;
+    }
+
+    /** Redraw the MicroPython input line and move the cursor to the correct position. */
+    private redrawMpyLine(): void {
+        // Redraw prompt and input line
+        this.write(`\r`); // Move to start of line
+        this.write(this.getPrompt());
+        this.write(this.mpyInputLine);
+        // Clear any extra characters from previous input
+        if (this.mpyInputLine.length < this.lastDrawnLength) {
+            this.write(' '.repeat(this.lastDrawnLength - this.mpyInputLine.length));
+        }
+        this.lastDrawnLength = this.mpyInputLine.length;
+        // Move cursor to correct position
+        const promptLen = this.getPrompt().length;
+        const targetCol = promptLen + this.mpyCursor;
+        const currentCol = promptLen + this.mpyInputLine.length;
+        if (targetCol < currentCol) {
+            this.write(`\x1b[${currentCol - targetCol}D`);
+        }
+    }
+
+    /** Returns the MicroPython prompt string. */
+    private getPrompt(): string {
+        return '>>> ';
     }
 
     private writePrompt(): void {

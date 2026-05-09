@@ -1,8 +1,8 @@
 {
   "name": "usb-local",
-  "displayName": "Serial Terminal",
+  "displayName": "UART Studio",
   "description": "UART/Serial port terminal for VS Code desktop.",
-  "version": "1.0.10",
+  "version": "1.0.13",
   "publisher": "Na2l",
   "repository": {
     "type": "git",
@@ -91,7 +91,9 @@
   "scripts": {
     "clean": "rm -rf dist releases/*",
     "compile": "webpack",
-    "package": "webpack && npx vsce package --out releases/"
+    "package": "webpack && npx vsce package --out releases/",
+    "publish1": "webpack && npx vsce login Na2l && npsx vsce publish",
+    "publish": "webpack && npx vsce login Na2l && npx vsce publish"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0",
